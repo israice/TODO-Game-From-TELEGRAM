@@ -1,5 +1,6 @@
 const { Telegraf, Markup } = require('telegraf');
 const config = require('./config');
+const browser = require('./browser');
 const getTasks = require('./tasks/get');
 const addTask = require('./tasks/add');
 const deleteTask = require('./tasks/delete');
@@ -35,6 +36,12 @@ const mainKeyboard = Markup.inlineKeyboard([
 ]);
 
 bot.start((ctx) => ctx.reply(config.telegram.messages.start, mainKeyboard));
+
+// Command to close browser
+bot.command('stop', async (ctx) => {
+  await browser.close();
+  ctx.reply('🛑 Браузер закрыт');
+});
 
 bot.action(config.telegram.actions.ADD_TASK, (ctx) => {
   ctx.reply(config.telegram.messages.prompts.add_task);
@@ -134,6 +141,16 @@ bot.on('text', async (ctx) => {
 
 bot.launch();
 console.log('Telegram bot started...');
+console.log('Browser will stay open between actions. Use /stop to close it.');
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGINT', async () => {
+  console.log('Shutting down...');
+  await browser.close();
+  bot.stop('SIGINT');
+});
+
+process.once('SIGTERM', async () => {
+  console.log('Shutting down...');
+  await browser.close();
+  bot.stop('SIGTERM');
+});

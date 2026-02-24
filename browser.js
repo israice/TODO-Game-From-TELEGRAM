@@ -6,15 +6,25 @@ class BrowserService {
     this.browser = null;
     this.context = null;
     this.page = null;
+    this.isLoggedIn = false;
   }
 
-  async launch() {
-    this.browser = await chromium.launch({ headless: config.browser.headless });
-    this.context = await this.browser.newContext();
-    this.page = await this.context.newPage();
+  async ensureRunning() {
+    if (!this.browser || !this.page) {
+      console.log('Launching browser...');
+      this.browser = await chromium.launch({ headless: config.browser.headless });
+      this.context = await this.browser.newContext();
+      this.page = await this.context.newPage();
+      this.isLoggedIn = false;
+    }
+    return this;
   }
 
-  async login() {
+  async ensureLoggedIn() {
+    if (this.isLoggedIn) {
+      return this;
+    }
+
     console.log('Logging in...');
     await this.page.goto(config.browser.loginUrl);
 
@@ -27,6 +37,8 @@ class BrowserService {
 
     console.log('✓ Login complete');
     await this.sleep(config.delays.afterLogin);
+    this.isLoggedIn = true;
+    return this;
   }
 
   async getTasks() {
@@ -111,11 +123,19 @@ class BrowserService {
   }
 
   async close() {
-    await this.sleep(config.delays.beforeClose);
-    await this.page.close();
-    console.log('✓ Tab closed');
-    await this.context.close();
-    await this.browser.close();
+    if (this.page) {
+      await this.page.close();
+      console.log('✓ Tab closed');
+    }
+    if (this.context) await this.context.close();
+    if (this.browser) {
+      await this.browser.close();
+      console.log('✓ Browser closed');
+    }
+    this.browser = null;
+    this.context = null;
+    this.page = null;
+    this.isLoggedIn = false;
   }
 
   sleep(ms) {
@@ -123,4 +143,7 @@ class BrowserService {
   }
 }
 
-module.exports = BrowserService;
+// Singleton instance
+const instance = new BrowserService();
+
+module.exports = instance;

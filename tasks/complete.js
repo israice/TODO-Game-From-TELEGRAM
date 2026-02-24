@@ -1,14 +1,9 @@
-const BrowserService = require('../browser');
+const browser = require('../browser');
 
 async function completeTask(index) {
-  const browser = new BrowserService();
-  try {
-    await browser.launch();
-    await browser.login();
-    await browser.completeTask(index);
-  } finally {
-    await browser.close();
-  }
+  await browser.ensureRunning();
+  await browser.ensureLoggedIn();
+  await browser.completeTask(index);
 }
 
 module.exports = completeTask;

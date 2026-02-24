@@ -1,14 +1,9 @@
-const BrowserService = require('../browser');
+const browser = require('../browser');
 
 async function renameTask(index, newText) {
-  const browser = new BrowserService();
-  try {
-    await browser.launch();
-    await browser.login();
-    await browser.renameTask(index, newText);
-  } finally {
-    await browser.close();
-  }
+  await browser.ensureRunning();
+  await browser.ensureLoggedIn();
+  await browser.renameTask(index, newText);
 }
 
 module.exports = renameTask;
