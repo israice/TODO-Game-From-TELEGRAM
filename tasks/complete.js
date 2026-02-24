@@ -1,9 +1,8 @@
 const browser = require('../browser');
 
-async function completeTask(index) {
+async function completeTask(userId, index) {
   await browser.ensureRunning();
-  await browser.ensureLoggedIn();
-  await browser.completeTask(index);
+  await browser.completeTask(userId, index);
 }
 
 module.exports = completeTask;

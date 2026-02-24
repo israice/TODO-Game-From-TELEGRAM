@@ -1,9 +1,8 @@
 const browser = require('../browser');
 
-async function renameTask(index, newText) {
+async function renameTask(userId, index, newText) {
   await browser.ensureRunning();
-  await browser.ensureLoggedIn();
-  await browser.renameTask(index, newText);
+  await browser.renameTask(userId, index, newText);
 }
 
 module.exports = renameTask;

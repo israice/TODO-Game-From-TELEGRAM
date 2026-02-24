@@ -1,9 +1,8 @@
 const browser = require('../browser');
 
-async function deleteTask(index) {
+async function deleteTask(userId, index) {
   await browser.ensureRunning();
-  await browser.ensureLoggedIn();
-  await browser.deleteTask(index);
+  await browser.deleteTask(userId, index);
 }
 
 module.exports = deleteTask;

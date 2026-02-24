@@ -1,9 +1,8 @@
 const browser = require('../browser');
 
-async function addTask(text) {
+async function addTask(userId, text) {
   await browser.ensureRunning();
-  await browser.ensureLoggedIn();
-  await browser.addTask(text);
+  await browser.addTask(userId, text);
 }
 
 module.exports = addTask;
