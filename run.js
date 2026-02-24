@@ -1,13 +1,6 @@
 const { Telegraf, Markup } = require('telegraf');
 const config = require('./config');
 const browser = require('./browser');
-const getTasks = require('./tasks/get');
-const addTask = require('./tasks/add');
-const deleteTask = require('./tasks/delete');
-const renameTask = require('./tasks/rename');
-const completeTask = require('./tasks/complete');
-const login = require('./tasks/login');
-const register = require('./tasks/register');
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
@@ -54,7 +47,6 @@ const backToAuthKeyboard = Markup.inlineKeyboard([
 ]);
 
 bot.start(async (ctx) => {
-  // Close this user's browser session
   const userId = ctx.from?.id;
   if (userId) {
     await browser.closeUserSession(userId);
@@ -63,7 +55,6 @@ bot.start(async (ctx) => {
   ctx.reply(config.telegram.messages.auth.start, authKeyboard);
 });
 
-// Command to close browser for this user
 bot.command('stop', async (ctx) => {
   const userId = ctx.from?.id;
   if (userId) {
@@ -74,19 +65,16 @@ bot.command('stop', async (ctx) => {
 
 // === AUTH FLOW ===
 
-// Login button handler
 bot.action(config.telegram.actions.LOGIN, (ctx) => {
   ctx.reply(config.telegram.messages.auth.login_prompt);
   ctx.session = { action: config.telegram.actions.LOGIN, step: 'enter_username', authenticated: false };
 });
 
-// Registration button handler
 bot.action(config.telegram.actions.REGISTER, (ctx) => {
   ctx.reply(config.telegram.messages.auth.register_username_prompt);
   ctx.session = { action: config.telegram.actions.REGISTER, step: 'enter_username', authenticated: false };
 });
 
-// Back to auth handler
 bot.action('back_to_auth', (ctx) => {
   ctx.session = { action: null, step: null, authenticated: false };
   ctx.editMessageText(config.telegram.messages.auth.start, authKeyboard);
@@ -94,7 +82,6 @@ bot.action('back_to_auth', (ctx) => {
 
 // === TASK FLOW (only for authenticated users) ===
 
-// Check if user is authenticated
 function checkAuth(ctx) {
   if (!ctx.session?.authenticated) {
     ctx.reply(config.telegram.messages.no_action, authKeyboard);
@@ -109,13 +96,13 @@ bot.action(config.telegram.actions.ADD_TASK, (ctx) => {
   ctx.session = { ...ctx.session, action: config.telegram.actions.ADD_TASK };
 });
 
-// Load and show tasks for DELETE, RENAME, COMPLETE
 async function loadAndShowTasks(ctx, action) {
   if (!checkAuth(ctx)) return;
   const userId = ctx.from?.id;
   ctx.reply(config.telegram.messages.loading_tasks);
   try {
-    const tasks = await getTasks(userId);
+    await browser.ensureRunning();
+    const tasks = await browser.getTasks(userId);
     if (tasks.length === 0) {
       ctx.reply(config.telegram.messages.no_tasks, mainKeyboard);
       ctx.session = { ...ctx.session, action: null };
@@ -123,16 +110,14 @@ async function loadAndShowTasks(ctx, action) {
     }
     const taskList = tasks.map((task, i) => `${i + 1}. ${task}`).join('\n');
     await ctx.reply(config.telegram.messages.task_list.replace('%s', taskList));
-    
-    // If action is null (SHOW_TASKS), just show the list and return to main menu
+
     if (action === null) {
       ctx.session = { ...ctx.session, action: null };
       return;
     }
-    
+
     ctx.session = { ...ctx.session, action, step: 'select_task', tasks };
   } catch (error) {
-    // Check if browser was closed
     if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
       ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
       ctx.session = { action: null, step: null, authenticated: false };
@@ -156,23 +141,19 @@ bot.on('text', async (ctx) => {
 
   // === AUTH FLOW ===
 
-  // Step 1: Enter username for LOGIN or REGISTER
   if (step === 'enter_username') {
     const username = ctx.message.text.trim();
     if (action === config.telegram.actions.REGISTER) {
-      // For registration, ask for password next
       ctx.session = { ...session, step: 'enter_password', tempCredentials: { username } };
       ctx.reply(config.telegram.messages.auth.register_password_prompt);
       return;
     } else if (action === config.telegram.actions.LOGIN) {
-      // For login, ask for password next
       ctx.session = { ...session, step: 'enter_password', tempCredentials: { username } };
       ctx.reply(config.telegram.messages.auth.password_prompt);
       return;
     }
   }
 
-  // Step 2: Enter password for LOGIN or REGISTER
   if (step === 'enter_password') {
     const password = ctx.message.text.trim();
     const username = tempCredentials?.username;
@@ -185,14 +166,13 @@ bot.on('text', async (ctx) => {
     ctx.reply(config.telegram.messages.executing);
 
     if (action === config.telegram.actions.LOGIN) {
-      // Try to login
       try {
-        const result = await login(userId, username, password);
+        await browser.ensureRunning();
+        const result = await browser.tryLogin(userId, username, password);
         if (result.success) {
           ctx.reply(config.telegram.messages.auth.login_success, mainKeyboard);
           ctx.session = { action: null, step: null, authenticated: true };
         } else {
-          // Check if account is already in use
           if (result.alreadyInUse) {
             ctx.reply('❌ Этот аккаунт уже используется другим пользователем', authKeyboard);
           } else {
@@ -201,7 +181,6 @@ bot.on('text', async (ctx) => {
           ctx.session = { action: null, step: null, authenticated: false };
         }
       } catch (error) {
-        // Check if browser was closed
         if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
           ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
           ctx.session = { action: null, step: null, authenticated: false };
@@ -214,14 +193,13 @@ bot.on('text', async (ctx) => {
     }
 
     if (action === config.telegram.actions.REGISTER) {
-      // Try to register
       try {
-        const result = await register(userId, username, password);
+        await browser.ensureRunning();
+        const result = await browser.register(userId, username, password);
         if (result.success) {
           ctx.reply(config.telegram.messages.auth.register_success, mainKeyboard);
           ctx.session = { action: null, step: null, authenticated: true };
         } else {
-          // Registration failed
           if (result.alreadyInUse) {
             ctx.reply('❌ Этот аккаунт уже используется другим пользователем', authKeyboard);
           } else if (result.alreadyExists) {
@@ -232,7 +210,6 @@ bot.on('text', async (ctx) => {
           ctx.session = { action: null, step: null, authenticated: false };
         }
       } catch (error) {
-        // Check if browser was closed
         if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
           ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
           ctx.session = { action: null, step: null, authenticated: false };
@@ -257,7 +234,6 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  // Step 1: Select task by number
   if (step === 'select_task') {
     const taskNumber = parseInt(ctx.message.text.trim()) - 1;
     if (isNaN(taskNumber) || taskNumber < 0 || taskNumber >= tasks.length) {
@@ -273,17 +249,16 @@ bot.on('text', async (ctx) => {
       return;
     }
 
-    // DELETE or COMPLETE - execute immediately
     ctx.reply(config.telegram.messages.executing);
     try {
+      await browser.ensureRunning();
       if (action === config.telegram.actions.DELETE_TASK) {
-        await deleteTask(userId, taskNumber);
+        await browser.deleteTask(userId, taskNumber);
       } else if (action === config.telegram.actions.COMPLETE_TASK) {
-        await completeTask(userId, taskNumber);
+        await browser.completeTask(userId, taskNumber);
       }
       ctx.reply(config.telegram.messages.done, mainKeyboard);
     } catch (error) {
-      // Check if browser was closed
       if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
         ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
         ctx.session = { action: null, step: null, authenticated: false };
@@ -295,16 +270,15 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  // Step 2: Enter new name for RENAME
   if (step === 'enter_new_name') {
     const newTaskText = ctx.message.text.trim();
     const taskIndex = tasks.indexOf(selectedTask);
     ctx.reply(config.telegram.messages.executing);
     try {
-      await renameTask(userId, taskIndex, newTaskText);
+      await browser.ensureRunning();
+      await browser.renameTask(userId, taskIndex, newTaskText);
       ctx.reply(config.telegram.messages.done, mainKeyboard);
     } catch (error) {
-      // Check if browser was closed
       if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
         ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
         ctx.session = { action: null, step: null, authenticated: false };
@@ -316,13 +290,12 @@ bot.on('text', async (ctx) => {
     return;
   }
 
-  // ADD_TASK - just text input
   ctx.reply(config.telegram.messages.executing);
   try {
-    await addTask(userId, ctx.message.text);
+    await browser.ensureRunning();
+    await browser.addTask(userId, ctx.message.text);
     ctx.reply(config.telegram.messages.done, mainKeyboard);
   } catch (error) {
-    // Check if browser was closed
     if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
       ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
       ctx.session = { action: null, step: null, authenticated: false };
@@ -336,14 +309,11 @@ bot.on('text', async (ctx) => {
 bot.launch();
 console.log('Telegram bot started...');
 
-// Initialize browser and notify admins
 async function initBrowser() {
   try {
     await browser.ensureRunning();
-    // Don't navigate to a page here - each user will have their own session
     console.log('✓ Browser launched and ready for sessions');
 
-    // Send startup notification to all admins (only if they have started the bot)
     if (config.telegram.adminIds.length > 0) {
       for (const adminId of config.telegram.adminIds) {
         try {
@@ -366,7 +336,6 @@ async function initBrowser() {
   }
 }
 
-// Wait for bot to be ready, then open browser
 setTimeout(() => {
   initBrowser();
 }, config.delays.botInit);
