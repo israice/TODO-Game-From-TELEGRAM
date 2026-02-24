@@ -14,9 +14,10 @@ node run.js
 
 # UPDATE
 git add .
-git commit -m "v0.0.180 - demo playlist fix step 1"
+git commit -m "v0.0.2 - same functionality with minimum code"
 git push
 node run.js
 
 # DEV LOG
 v0.0.1 - telegram bot to open a page in browser
+v0.0.2 - same functionality with minimum code
