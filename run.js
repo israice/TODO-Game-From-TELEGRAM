@@ -42,6 +42,9 @@ const mainKeyboard = Markup.inlineKeyboard([
   [
     Markup.button.callback(config.telegram.buttons.rename_task, config.telegram.actions.RENAME_TASK),
     Markup.button.callback(config.telegram.buttons.complete_task, config.telegram.actions.COMPLETE_TASK)
+  ],
+  [
+    Markup.button.callback(config.telegram.buttons.show_tasks, config.telegram.actions.SHOW_TASKS)
   ]
 ]);
 
@@ -66,7 +69,7 @@ bot.command('stop', async (ctx) => {
   if (userId) {
     await browser.closeUserSession(userId);
   }
-  ctx.reply('🛑 Браузер закрыт');
+  ctx.reply('✅ Сервер остановлен пользователем');
 });
 
 // === AUTH FLOW ===
@@ -79,7 +82,7 @@ bot.action(config.telegram.actions.LOGIN, (ctx) => {
 
 // Registration button handler
 bot.action(config.telegram.actions.REGISTER, (ctx) => {
-  ctx.reply('Введите имя пользователя для регистрации:');
+  ctx.reply(config.telegram.messages.auth.register_username_prompt);
   ctx.session = { action: config.telegram.actions.REGISTER, step: 'enter_username', authenticated: false };
 });
 
@@ -94,7 +97,7 @@ bot.action('back_to_auth', (ctx) => {
 // Check if user is authenticated
 function checkAuth(ctx) {
   if (!ctx.session?.authenticated) {
-    ctx.reply('❌ Сначала авторизуйтесь (нажмите /start)', authKeyboard);
+    ctx.reply(config.telegram.messages.no_action, authKeyboard);
     return false;
   }
   return true;
@@ -120,16 +123,30 @@ async function loadAndShowTasks(ctx, action) {
     }
     const taskList = tasks.map((task, i) => `${i + 1}. ${task}`).join('\n');
     await ctx.reply(config.telegram.messages.task_list.replace('%s', taskList));
+    
+    // If action is null (SHOW_TASKS), just show the list and return to main menu
+    if (action === null) {
+      ctx.session = { ...ctx.session, action: null };
+      return;
+    }
+    
     ctx.session = { ...ctx.session, action, step: 'select_task', tasks };
   } catch (error) {
-    ctx.reply(config.telegram.messages.error.replace('%s', error.message), mainKeyboard);
-    ctx.session = { ...ctx.session, action: null };
+    // Check if browser was closed
+    if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
+      ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
+      ctx.session = { action: null, step: null, authenticated: false };
+    } else {
+      ctx.reply(config.telegram.messages.error.replace('%s', error.message), mainKeyboard);
+      ctx.session = { ...ctx.session, action: null };
+    }
   }
 }
 
 bot.action(config.telegram.actions.DELETE_TASK, (ctx) => loadAndShowTasks(ctx, config.telegram.actions.DELETE_TASK));
 bot.action(config.telegram.actions.RENAME_TASK, (ctx) => loadAndShowTasks(ctx, config.telegram.actions.RENAME_TASK));
 bot.action(config.telegram.actions.COMPLETE_TASK, (ctx) => loadAndShowTasks(ctx, config.telegram.actions.COMPLETE_TASK));
+bot.action(config.telegram.actions.SHOW_TASKS, (ctx) => loadAndShowTasks(ctx, null));
 
 // Handle text messages
 bot.on('text', async (ctx) => {
@@ -145,7 +162,7 @@ bot.on('text', async (ctx) => {
     if (action === config.telegram.actions.REGISTER) {
       // For registration, ask for password next
       ctx.session = { ...session, step: 'enter_password', tempCredentials: { username } };
-      ctx.reply('Введите пароль:');
+      ctx.reply(config.telegram.messages.auth.register_password_prompt);
       return;
     } else if (action === config.telegram.actions.LOGIN) {
       // For login, ask for password next
@@ -161,7 +178,7 @@ bot.on('text', async (ctx) => {
     const username = tempCredentials?.username;
 
     if (!username) {
-      ctx.reply('❌ Ошибка сессии. Начните сначала: /start', authKeyboard);
+      ctx.reply(config.telegram.messages.session_error, authKeyboard);
       return;
     }
 
@@ -170,17 +187,28 @@ bot.on('text', async (ctx) => {
     if (action === config.telegram.actions.LOGIN) {
       // Try to login
       try {
-        const success = await login(userId, username, password);
-        if (success) {
+        const result = await login(userId, username, password);
+        if (result.success) {
           ctx.reply(config.telegram.messages.auth.login_success, mainKeyboard);
           ctx.session = { action: null, step: null, authenticated: true };
         } else {
-          ctx.reply(config.telegram.messages.auth.login_failed, authKeyboard);
+          // Check if account is already in use
+          if (result.alreadyInUse) {
+            ctx.reply('❌ Этот аккаунт уже используется другим пользователем', authKeyboard);
+          } else {
+            ctx.reply(config.telegram.messages.auth.login_failed, authKeyboard);
+          }
           ctx.session = { action: null, step: null, authenticated: false };
         }
       } catch (error) {
-        ctx.reply(config.telegram.messages.error.replace('%s', error.message), authKeyboard);
-        ctx.session = { action: null, step: null, authenticated: false };
+        // Check if browser was closed
+        if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
+          ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
+          ctx.session = { action: null, step: null, authenticated: false };
+        } else {
+          ctx.reply(config.telegram.messages.error.replace('%s', error.message), authKeyboard);
+          ctx.session = { action: null, step: null, authenticated: false };
+        }
       }
       return;
     }
@@ -188,17 +216,30 @@ bot.on('text', async (ctx) => {
     if (action === config.telegram.actions.REGISTER) {
       // Try to register
       try {
-        const success = await register(userId, username, password);
-        if (success) {
-          ctx.reply(config.telegram.messages.auth.register_success, authKeyboard);
-          ctx.session = { action: null, step: null, authenticated: false };
+        const result = await register(userId, username, password);
+        if (result.success) {
+          ctx.reply(config.telegram.messages.auth.register_success, mainKeyboard);
+          ctx.session = { action: null, step: null, authenticated: true };
         } else {
-          ctx.reply(config.telegram.messages.auth.register_failed.replace('%s', 'Неверные данные или пользователь уже существует'), authKeyboard);
+          // Registration failed
+          if (result.alreadyInUse) {
+            ctx.reply('❌ Этот аккаунт уже используется другим пользователем', authKeyboard);
+          } else if (result.alreadyExists) {
+            ctx.reply('❌ Пользователь с таким именем уже существует. Попробуйте другое имя или войдите.', authKeyboard);
+          } else {
+            ctx.reply(config.telegram.messages.auth.register_failed.replace('%s', result.error || 'Неизвестная ошибка'), authKeyboard);
+          }
           ctx.session = { action: null, step: null, authenticated: false };
         }
       } catch (error) {
-        ctx.reply(config.telegram.messages.auth.register_failed.replace('%s', error.message), authKeyboard);
-        ctx.session = { action: null, step: null, authenticated: false };
+        // Check if browser was closed
+        if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
+          ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
+          ctx.session = { action: null, step: null, authenticated: false };
+        } else {
+          ctx.reply(config.telegram.messages.auth.register_failed.replace('%s', error.message), authKeyboard);
+          ctx.session = { action: null, step: null, authenticated: false };
+        }
       }
       return;
     }
@@ -228,7 +269,7 @@ bot.on('text', async (ctx) => {
 
     if (action === config.telegram.actions.RENAME_TASK) {
       ctx.session = { ...session, step: 'enter_new_name', tasks, selectedTask };
-      ctx.reply('Введите новое имя для задачи:');
+      ctx.reply(config.telegram.messages.auth.rename_prompt);
       return;
     }
 
@@ -242,7 +283,13 @@ bot.on('text', async (ctx) => {
       }
       ctx.reply(config.telegram.messages.done, mainKeyboard);
     } catch (error) {
-      ctx.reply(config.telegram.messages.error.replace('%s', error.message), mainKeyboard);
+      // Check if browser was closed
+      if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
+        ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
+        ctx.session = { action: null, step: null, authenticated: false };
+      } else {
+        ctx.reply(config.telegram.messages.error.replace('%s', error.message), mainKeyboard);
+      }
     }
     ctx.session = { action: null, step: null, authenticated: true };
     return;
@@ -257,7 +304,13 @@ bot.on('text', async (ctx) => {
       await renameTask(userId, taskIndex, newTaskText);
       ctx.reply(config.telegram.messages.done, mainKeyboard);
     } catch (error) {
-      ctx.reply(config.telegram.messages.error.replace('%s', error.message), mainKeyboard);
+      // Check if browser was closed
+      if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
+        ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
+        ctx.session = { action: null, step: null, authenticated: false };
+      } else {
+        ctx.reply(config.telegram.messages.error.replace('%s', error.message), mainKeyboard);
+      }
     }
     ctx.session = { action: null, step: null, authenticated: true };
     return;
@@ -269,7 +322,13 @@ bot.on('text', async (ctx) => {
     await addTask(userId, ctx.message.text);
     ctx.reply(config.telegram.messages.done, mainKeyboard);
   } catch (error) {
-    ctx.reply(config.telegram.messages.error.replace('%s', error.message), mainKeyboard);
+    // Check if browser was closed
+    if (error.message.includes('closed') || error.message.includes('Target page') || error.message.includes('context')) {
+      ctx.reply(config.telegram.messages.browser_closed, authKeyboard);
+      ctx.session = { action: null, step: null, authenticated: false };
+    } else {
+      ctx.reply(config.telegram.messages.error.replace('%s', error.message), mainKeyboard);
+    }
   }
   ctx.session = { action: null, step: null, authenticated: true };
 });
@@ -290,7 +349,7 @@ async function initBrowser() {
         try {
           await bot.telegram.sendMessage(
             adminId,
-            '🔄 Сервер перезапустился. Требуется авторизация.',
+            config.telegram.messages.server_restart,
             authKeyboard
           );
           console.log(`✓ Startup notification sent to admin ${adminId}`);
@@ -310,18 +369,22 @@ async function initBrowser() {
 // Wait for bot to be ready, then open browser
 setTimeout(() => {
   initBrowser();
-}, 2000);
+}, config.delays.botInit);
 
 console.log('Browser will open automatically. Use /stop to close it.');
 
 process.once('SIGINT', async () => {
-  console.log('Shutting down...');
+  console.log('\n🛑 Остановка сервера пользователем (Ctrl+C)...');
   await browser.close();
   bot.stop('SIGINT');
+  console.log('✅ Сервер остановлен\n');
+  process.exit(0);
 });
 
 process.once('SIGTERM', async () => {
-  console.log('Shutting down...');
+  console.log('\n🛑 Остановка сервера (SIGTERM)...');
   await browser.close();
   bot.stop('SIGTERM');
+  console.log('✅ Сервер остановлен\n');
+  process.exit(0);
 });
